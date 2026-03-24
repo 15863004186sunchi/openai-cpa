@@ -1,31 +1,24 @@
 import json
 import os
 import re
-import sys
 import time
-import uuid
-import math
 import random
 import string
 import secrets
 import hashlib
 import base64
-import threading
 import argparse
 import asyncio
-from datetime import datetime, timezone, timedelta
-from urllib.parse import urlparse, parse_qs, urlencode, quote
+from datetime import datetime
 from dataclasses import dataclass
-from typing import Any, Dict, Optional, List, Tuple
+from typing import Any, Dict, Optional, Tuple
 import urllib.parse
-import ssl
-import urllib.request
-import urllib.error
+from urllib.parse import urlparse, parse_qs, quote
 from html import unescape
+
 import imaplib
 import socks
 import socket
-import ssl
 from email import message_from_string
 from email.header import decode_header, make_header
 from email.message import Message
@@ -37,17 +30,17 @@ from curl_cffi import CurlMime
 
 # ================= 配置区开始 =================
 # 可选值: "imap" / "freemail" / "cloudflare_temp_email"
-EMAIL_API_MODE = "cloudflare_temp_email"
+EMAIL_API_MODE = "imap"
 
 # [公共配置: cloudflare_temp_email / imap 共享]
 MAIL_DOMAINS = "domain1.com,domain2.xyz,domain3.net" # 你的域名 (支持逗号分隔多域名随机轮换) 如果只有一个域名就只填一个域名
-GPTMAIL_BASE = "https://your-domain.com"     # 你的临时邮箱 后端API 基础地址 结尾不要/
+GPTMAIL_BASE = "https://your-domain.com"     # 你的临时邮箱 后端API 基础地址 结尾不要/，注意：用浏览器打开后端api验证是否可访问
 
 # [模式 "imap" 专属配置] (CF Catch-all 转发接收端)
-IMAP_SERVER = "imap.qq.com"           # 默认为QQ IMAP 服务器地址,谷歌为imap.gmail.com
+IMAP_SERVER = "imap.gmail.com"           # 默认为gmail IMAP 服务器地址,QQ为imap.qq.com。不建议用QQ
 IMAP_PORT = 993                          # IMAP 端口
-IMAP_USER = "QQ邮箱" # 接收转发的真实邮箱账号
-IMAP_PASS = "专用密码"          # 16位应用专用密码，谷歌邮箱要去https://myaccount.google.com/apppasswords这里创建专属应用密码
+IMAP_USER = "" # 接收转发的真实邮箱账号
+IMAP_PASS = ""          # 16位应用专用密码，谷歌邮箱要去https://myaccount.google.com/apppasswords这里创建专属应用密码
 
 # [模式 "freemail" 专属]
 FREEMAIL_API_URL = "https://your-domain.com"
@@ -58,7 +51,7 @@ ADMIN_AUTH = "" # 你的临时邮箱管理员密码
 
 DEFAULT_PROXY = "" #openai注册时代理地址，例子：http://127.0.0.1:7897。如果是国外服务器此项可以不填
 # [邮箱代理专项配置]
-USE_PROXY_FOR_EMAIL = False  # 【开关】True 表示获取邮箱也用代理，False 表示直连（推荐先试 False）如果是国外服务器此项可以保持False
+USE_PROXY_FOR_EMAIL = False  # 【开关】True 表示获取邮箱（谷歌）也用代理，False 表示直连（推荐先试 False）如果是国外服务器此项可以保持False
 TOKEN_OUTPUT_DIR = os.getenv("TOKEN_OUTPUT_DIR", "").strip() #目录 默认存放跟脚本一个目录
 # ================= 这里不要动 =================
 AUTH_URL = "https://auth.openai.com/oauth/authorize"
@@ -288,7 +281,7 @@ def get_oai_code(email: str, jwt: str = "", proxies: Any = None, processed_mail_
                 import socket
             except ImportError:
                 print(f"\n[{ts()}] [WARNING] 未安装 pysocks，回退到直连。")
-                return imaplib.IMAP4_SSL(IMAP_SERVER, IMAP_PORT, timeout=15)
+                return imaplib.IMAP4_SSL(IMAP_SERVER, IMAP_PORT, timeout=60)
             
             print(f"\n[{ts()}] [INFO] 正在为 IMAP 注入底层代理穿透...")
             try:
@@ -333,22 +326,26 @@ def get_oai_code(email: str, jwt: str = "", proxies: Any = None, processed_mail_
                         time.sleep(5)
                         continue
 
-                folders_to_check = ['INBOX', '"[Gmail]/Spam"']
+                folders_to_check = ['INBOX', 'Junk', '"Junk Email"', 'Spam', '"[Gmail]/Spam"', '"垃圾邮件"']
                 found_in_loop = False
                 
                 for folder in folders_to_check:
                     try:
+                        mail_conn.noop()
                         status, _ = mail_conn.select(folder, readonly=True)
                         if status != 'OK': continue
-                        search_query = f'(FROM "openai.com" TO "{email}")'
+                        
+                        search_query = f'(UNSEEN FROM "openai.com" TO "{email}")'
                         status, messages = mail_conn.search(None, search_query)
                         
                         if status == 'OK' and messages[0]:
                             mail_ids = messages[0].split()
-                            latest_id = mail_ids[-1]
                             
-                            if latest_id not in processed_mail_ids:
-                                res, data = mail_conn.fetch(latest_id, '(RFC822)')
+                            for mail_id in reversed(mail_ids):
+                                if mail_id in processed_mail_ids:
+                                    continue
+                                
+                                res, data = mail_conn.fetch(mail_id, '(RFC822)')
                                 for response_part in data:
                                     if isinstance(response_part, tuple):
                                         msg = email_lib.message_from_bytes(response_part[1])
@@ -367,10 +364,18 @@ def get_oai_code(email: str, jwt: str = "", proxies: Any = None, processed_mail_
                                                     except: pass
                                         else:
                                             content = msg.get_payload(decode=True).decode('utf-8', 'ignore')
+
+                                        to_header = str(msg.get("To", "")).lower()
+                                        delivered_to = str(msg.get("Delivered-To", "")).lower()
+                                        target_email = email.lower()
+                                        
+                                        if target_email not in to_header and target_email not in delivered_to and target_email not in content.lower():
+                                            processed_mail_ids.add(mail_id) 
+                                            continue 
                                         
                                         code = _extract_otp_code(f"{subject}\n{content}")
                                         if code:
-                                            processed_mail_ids.add(latest_id)
+                                            processed_mail_ids.add(mail_id)
                                             print(f"\n[{ts()}] [SUCCESS] 验证码: {code}")
                                             try:
                                                 mail_conn.logout()
@@ -378,7 +383,7 @@ def get_oai_code(email: str, jwt: str = "", proxies: Any = None, processed_mail_
                                                 pass
                                             return code
                                         else:
-                                            processed_mail_ids.add(latest_id)
+                                            processed_mail_ids.add(mail_id)
                             
                             found_in_loop = True
                             break
