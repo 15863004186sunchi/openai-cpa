@@ -9,13 +9,13 @@ email_api_mode: "cloudflare_temp_email"
 # [基础配置: cloudflare_temp_email / imap / cloudmail 共享]
 # 你的域名 (支持逗号分隔多域名随机轮换) 如果只有一个域名就只填一个域名
 
-mail_domains: "domain1.com,domain2.xyz,domain3.net"
+mail_domains: "happyfish.us.ci"
 # 你的临时邮箱 后端API 基础地址 结尾不要/，IMAP和freemail/cloudmail/mail_curl不需要配置此项。注意：用浏览器打开后端api验证是否可访问
-gptmail_base: "https://your-domain.com" #是后端访问链接，不是前端访问链接，正常情况浏览器打开访问会显示ok就是对的
+gptmail_base: "https://happyfishmail.2876047765.workers.dev" #是后端访问链接，不是前端访问链接，正常情况浏览器打开访问会显示ok就是对的
 
 # [模式 "cloudflare_temp_email" 专属配置]
 # 你的临时邮箱管理员密码
-admin_auth: ""
+admin_auth: "sunchi"
 
 # [模式 "imap" 专属配置] (CF Catch-all 转发接收端)
 imap:
