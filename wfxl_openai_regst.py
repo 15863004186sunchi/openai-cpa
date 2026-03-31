@@ -230,28 +230,39 @@ _print_lock = threading.Lock()
 def thread_safe_print(*args, **kwargs):
     """
     智能拦截器：
-    单线程下：原样输出，保留进度条打点效果。
-    多线程下：把同一个线程里的 `end=""` 缓存起来，直到遇到换行符才一次性加锁输出。
+    单线程/多线程统一劫持输出到 log_queue，供 Web 控制台实时展示。
     """
+    # 构造输出文本
+    sep = kwargs.get("sep", " ")
+    end = kwargs.get("end", "\n")
+    text = sep.join(map(str, args)) + end
+    
+    # 无论是否多线程，都尝试放入 log_queue
+    if 'log_queue' in globals():
+        # 这里移除结尾换行符，因为 Web 端通常会自己处理换行，或者为了美观
+        # 但 server.py 的 websocket 似乎是原样发送，所以我们保留原样或去掉最末尾的一个换行
+        log_queue.put(text.rstrip('\n'))
+
+    # 实际终端输出进度控制
     if not globals().get("ENABLE_MULTI_THREAD_REG", False):
         with _print_lock:
             _original_print(*args, **kwargs)
         return
+
     if not hasattr(_thread_local, 'buffer'):
         _thread_local.buffer = ""
 
     temp_io = io.StringIO()
     _original_print(*args, file=temp_io, **kwargs)
-
     _thread_local.buffer += temp_io.getvalue()
 
     if _thread_local.buffer.endswith('\n'):
         with _print_lock:
             final_msg = _thread_local.buffer.lstrip('\n')
             if final_msg:
-                _original_print(final_msg, end="", flush=True)
-                if 'log_queue' in globals():
-                    log_queue.put(final_msg)
+                # _original_print(final_msg, end="", flush=True) 
+                # 这里不需要重复 put 了，上面统一处理了
+                pass
         _thread_local.buffer = ""
 
 builtins.print = thread_safe_print
