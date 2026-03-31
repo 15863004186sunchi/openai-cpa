@@ -3,8 +3,13 @@
 # https://github.com/dreamhunter2333/cloudflare_temp_email
 # https://github.com/maillab/cloud-mail
 # https://github.com/s12ryt/mail-curl
-# 可选值: "imap" / "freemail" / "cloudflare_temp_email" / "cloudmail" / "mail_curl"
-email_api_mode: "cloudflare_temp_email"
+# 可选值: "imap" / "freemail" / "cloudflare_temp_email" / "cloudmail" / "mail_curl" / "outlook_file"
+email_api_mode: "outlook_file"
+
+# [模式 "outlook_file" 专属配置]
+outlook_file:
+  file_path: "outlook.txt" # 存放格式如 email----password 的文件
+
 
 # [基础配置: cloudflare_temp_email / imap / cloudmail 共享]
 # 你的域名 (支持逗号分隔多域名随机轮换) 如果只有一个域名就只填一个域名

@@ -74,6 +74,12 @@ MC_KEY = _mc.get("key", "")
 
 ADMIN_AUTH = _c.get("admin_auth", "")
 
+_of = _c.get("outlook_file", {})
+OUTLOOK_FILE_PATH = _of.get("file_path", "outlook.txt")
+_OUTLOOK_ACCOUNTS_QUEUE = queue.Queue()
+_OUTLOOK_INIT_LOCK = threading.Lock()
+_OUTLOOK_INITIALIZED = False
+
 MAX_OTP_RETRIES = _c.get("max_otp_retries", 5)
 DEFAULT_PROXY = _c.get("default_proxy", "")
 USE_PROXY_FOR_EMAIL = _c.get("use_proxy_for_email", False)
@@ -262,6 +268,29 @@ def get_email_and_token(proxies: Any = None) -> tuple:
     suffix = ''.join(random.choices(string.ascii_lowercase, k=random.randint(1, 3)))
     prefix = letters + digits + suffix
     
+    if EMAIL_API_MODE == "outlook_file":
+        global _OUTLOOK_INITIALIZED
+        with _OUTLOOK_INIT_LOCK:
+            if not _OUTLOOK_INITIALIZED:
+                if os.path.exists(OUTLOOK_FILE_PATH):
+                    with open(OUTLOOK_FILE_PATH, "r", encoding="utf-8") as f:
+                        for line in f:
+                            line = line.strip()
+                            if line and "----" in line:
+                                mail_str, pwd_str = line.split("----", 1)
+                                _OUTLOOK_ACCOUNTS_QUEUE.put((mail_str.strip(), pwd_str.strip()))
+                else:
+                    print(f"[{ts()}] [ERROR] 找不到 Outlook 账号文件: {OUTLOOK_FILE_PATH}")
+                _OUTLOOK_INITIALIZED = True
+        
+        if _OUTLOOK_ACCOUNTS_QUEUE.empty():
+            print(f"[{ts()}] [ERROR] outlook_file 账号队列已空！请补充 {OUTLOOK_FILE_PATH}")
+            return None, None
+            
+        acc_email, acc_pwd = _OUTLOOK_ACCOUNTS_QUEUE.get()
+        print(f"[{ts()}] [INFO] 从文件获取 Outlook 账号: {acc_email}")
+        return acc_email, acc_pwd
+
     if EMAIL_API_MODE == "mail_curl":
         try:
             url = f"{MC_API_BASE}/api/remail?key={MC_KEY}"
@@ -480,14 +509,14 @@ def get_oai_code(email: str, jwt: str = "", proxies: Any = None, processed_mail_
 
     if processed_mail_ids is None:
         processed_mail_ids = set()
-    def create_imap_conn():
-        if USE_PROXY_FOR_EMAIL and DEFAULT_PROXY and IMAP_SERVER.lower() == "imap.gmail.com":
+    def create_imap_conn(target_server=IMAP_SERVER):
+        if USE_PROXY_FOR_EMAIL and DEFAULT_PROXY and target_server.lower() in ("imap.gmail.com", "outlook.office365.com"):
             try:
                 import socks
                 import socket
             except ImportError:
                 print(f"\n[{ts()}] [WARNING] 未安装 pysocks，回退到直连。")
-                return imaplib.IMAP4_SSL(IMAP_SERVER, IMAP_PORT, timeout=60)
+                return imaplib.IMAP4_SSL(target_server, IMAP_PORT, timeout=60)
             
             print(f"\n[{ts()}] [INFO] 正在为 IMAP 注入底层代理穿透...")
             try:
@@ -501,24 +530,27 @@ def get_oai_code(email: str, jwt: str = "", proxies: Any = None, processed_mail_
                 try:
                     socks.set_default_proxy(proxy_type, proxy_host, proxy_port)
                     socket.socket = socks.socksocket
-                    conn = imaplib.IMAP4_SSL(IMAP_SERVER, IMAP_PORT, timeout=20)
+                    conn = imaplib.IMAP4_SSL(target_server, IMAP_PORT, timeout=20)
                     return conn
                 finally:
                     socket.socket = original_socket
                     
             except Exception as e:
                 print(f"\n[{ts()}] [ERROR] IMAP 代理注入失败: {e}，尝试回退到直连。")
-                return imaplib.IMAP4_SSL(IMAP_SERVER, IMAP_PORT, timeout=15)
+                return imaplib.IMAP4_SSL(target_server, IMAP_PORT, timeout=15)
         else:
-            return imaplib.IMAP4_SSL(IMAP_SERVER, IMAP_PORT, timeout=15)
+            return imaplib.IMAP4_SSL(target_server, IMAP_PORT, timeout=15)
     mail_conn = None
-    if EMAIL_API_MODE == "imap":
+    if EMAIL_API_MODE in ("imap", "outlook_file"):
+        imap_server = IMAP_SERVER if EMAIL_API_MODE == "imap" else "outlook.office365.com"
+        imap_user = IMAP_USER if EMAIL_API_MODE == "imap" else email
+        imap_pass = IMAP_PASS if EMAIL_API_MODE == "imap" else jwt
         try:
-            mail_conn = create_imap_conn()
-            clean_pass = IMAP_PASS.replace(" ", "")
-            mail_conn.login(IMAP_USER, clean_pass)
+            mail_conn = create_imap_conn(imap_server)
+            clean_pass = imap_pass.replace(" ", "")
+            mail_conn.login(imap_user, clean_pass)
         except Exception as e:
-            print(f"\n[{ts()}] [ERROR] IMAP 初始登录失败: {e}")
+            print(f"\n[{ts()}] [ERROR] IMAP 初始登录失败 ({imap_user}): {e}")
             mail_conn = None
     start_time = time.time()
     for attempt in range(20):
@@ -570,11 +602,14 @@ def get_oai_code(email: str, jwt: str = "", proxies: Any = None, processed_mail_
                                     processed_mail_ids.add(m_id)
                                     print(f"\n[{ts()}] [SUCCESS] CloudMail 提取验证码成功: {code}")
                                     return code
-            elif EMAIL_API_MODE == "imap":
+            elif EMAIL_API_MODE in ("imap", "outlook_file"):
+                imap_server = IMAP_SERVER if EMAIL_API_MODE == "imap" else "outlook.office365.com"
+                imap_user = IMAP_USER if EMAIL_API_MODE == "imap" else email
+                imap_pass = IMAP_PASS if EMAIL_API_MODE == "imap" else jwt
                 if not mail_conn:
                     try:
-                        mail_conn = imaplib.IMAP4_SSL(IMAP_SERVER, IMAP_PORT, timeout=15)
-                        mail_conn.login(IMAP_USER, IMAP_PASS.replace(" ", ""))
+                        mail_conn = imaplib.IMAP4_SSL(imap_server, IMAP_PORT, timeout=15)
+                        mail_conn.login(imap_user, imap_pass.replace(" ", ""))
                     except Exception as e:
                         time.sleep(5)
                         continue
