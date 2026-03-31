@@ -4,7 +4,7 @@
 # https://github.com/maillab/cloud-mail
 # https://github.com/s12ryt/mail-curl
 # 可选值: "imap" / "freemail" / "cloudflare_temp_email" / "cloudmail" / "mail_curl" / "outlook_file"
-email_api_mode: "outlook_file"
+email_api_mode: "gmail_alias"
 
 # [模式 "outlook_file" 专属配置]
 outlook_file:
