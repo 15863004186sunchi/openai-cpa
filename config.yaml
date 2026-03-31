@@ -14,8 +14,12 @@ outlook_file:
 
 # [模式 "gmail_alias" 专属配置]
 gmail_alias:
-  base_email: "" # 你的 Gmail 主地址，如 geeksunchi@gmail.com
-  app_password: "" # 你的 Gmail 应用专用密码 (16位)
+  # 支持配置多个 Gmail 主账号，自动轮换注册
+  accounts:
+    - email: "" # 如 geeksunchi@gmail.com
+      app_password: "" # 你的应用专用密码
+    - email: ""
+      app_password: ""
 
 
 # [基础配置: cloudflare_temp_email / imap / cloudmail 共享]

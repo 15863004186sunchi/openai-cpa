@@ -14,3 +14,4 @@ services:
       - ./data:/app/data
       - ./wfxl_openai_regst.py:/app/core_engine.py
       - ./outlook.txt:/app/outlook.txt
+      - ./accounts.txt:/app/accounts.txt

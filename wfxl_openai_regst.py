@@ -144,8 +144,7 @@ OTP_CODE_PATTERN = r"(?<!\d)(\d{6})(?!\d)"
 log_queue = queue.Queue()
 STOP_EVENT = threading.Event()
 LUCKMAIL_API_KEY = ""
-GMAIL_BASE_EMAIL = ""
-GMAIL_APP_PASSWORD = ""
+GMAIL_ACCOUNTS = []
 
 def reload_all_configs():
     global _c, EMAIL_API_MODE, MAIL_DOMAINS, GPTMAIL_BASE, ADMIN_AUTH
@@ -154,7 +153,7 @@ def reload_all_configs():
     global CM_API_URL, CM_ADMIN_EMAIL, CM_ADMIN_PASS
     global MC_API_BASE, MC_KEY
     global OUTLOOK_FILE_PATH, LUCKMAIL_API_KEY, MAX_OTP_RETRIES, DEFAULT_PROXY
-    global GMAIL_BASE_EMAIL, GMAIL_APP_PASSWORD
+    global GMAIL_ACCOUNTS
     global USE_PROXY_FOR_EMAIL, ENABLE_EMAIL_MASKING, TOKEN_OUTPUT_DIR
     global ENABLE_MULTI_THREAD_REG, REG_THREADS
     global ENABLE_CPA_MODE, SAVE_TO_LOCAL_IN_CPA_MODE, CPA_API_URL, CPA_API_TOKEN
@@ -192,8 +191,7 @@ def reload_all_configs():
     LUCKMAIL_API_KEY = _of.get("luckmail_api_key", "")
     
     _gm = _c.get("gmail_alias", {})
-    GMAIL_BASE_EMAIL = _gm.get("base_email", "")
-    GMAIL_APP_PASSWORD = _gm.get("app_password", "")
+    GMAIL_ACCOUNTS = _gm.get("accounts", [])
     
     MAX_OTP_RETRIES = _c.get("max_otp_retries", 5)
     DEFAULT_PROXY = _c.get("default_proxy", "")
@@ -397,15 +395,24 @@ def get_email_and_token(proxies: Any = None) -> tuple:
         return acc_email, acc_pwd
     
     if EMAIL_API_MODE == "gmail_alias":
+        if not GMAIL_ACCOUNTS:
+            print(f"[{ts()}] [ERROR] gmail_alias 模式未配置账号列表！")
+            return None, None
+        
+        # 随机选择一个 Gmail 主账号
+        selected_acc = random.choice(GMAIL_ACCOUNTS)
+        base_email = selected_acc.get("email", "")
+        app_password = selected_acc.get("app_password", "")
+        
         # 随机生成后缀
         random_suffix = "".join(random.choices(string.ascii_lowercase + string.digits, k=8))
-        if "@" in GMAIL_BASE_EMAIL:
-            name, domain = GMAIL_BASE_EMAIL.split("@", 1)
+        if "@" in base_email:
+            name, domain = base_email.split("@", 1)
             email_alias = f"{name}+{random_suffix}@{domain}"
-            print(f"[{ts()}] [INFO] 生成 Gmail 别名邮箱: {email_alias}")
-            return email_alias, GMAIL_APP_PASSWORD
+            print(f"[{ts()}] [INFO] 生成 Gmail 别名邮箱: {email_alias} (来源于: {base_email})")
+            return email_alias, app_password
         else:
-            print(f"[{ts()}] [ERROR] GMAIL_BASE_EMAIL 配置无效: {GMAIL_BASE_EMAIL}")
+            print(f"[{ts()}] [ERROR] 选中的 Gmail 地址无效: {base_email}")
             return None, None
 
     if EMAIL_API_MODE == "mail_curl":
@@ -664,7 +671,7 @@ def get_oai_code(email: str, jwt: str = "", proxies: Any = None, processed_mail_
         # jwt 实际上是 LuckMail 的 token
         print(f"\n[{ts()}] [INFO] 切换至 LuckMail API 模式 (Token: {jwt[:8]}***)")
     elif EMAIL_API_MODE == "gmail_alias":
-        print(f"\n[{ts()}] [INFO] 切换至 Gmail 别名模式 (Inbox: {GMAIL_BASE_EMAIL})")
+        print(f"\n[{ts()}] [INFO] 切换至 Gmail 别名模式 (正在提取验证码...)")
     elif EMAIL_API_MODE == "imap":
         imap_server = IMAP_SERVER
         imap_user = IMAP_USER
@@ -749,13 +756,27 @@ def get_oai_code(email: str, jwt: str = "", proxies: Any = None, processed_mail_
                 time.sleep(5)
                 continue
             elif EMAIL_API_MODE == "gmail_alias":
-                # Gmail 只有 1 个 Inbox，但要搜不同的别名 TO
+                # Gmail 模式下的 jwt 传过来的是 app_password
+                imap_user = ""
+                # 需要根据当前的 email 反查它是哪个账号的别名
+                # 或者在 get_email_and_token 阶段就把主账号也返回
+                # 简单起见，这里直接从 email 中剥离 + 之后的部分来定位主账号
+                if "+" in email and "@" in email:
+                    name, domain = email.split("@", 1)
+                    base_name = name.split("+")[0]
+                    imap_user = f"{base_name}@{domain}"
+                
+                if not imap_user:
+                    print(f"[{ts()}] [ERROR] 无法从别名解析主邮箱: {email}")
+                    time.sleep(5)
+                    continue
+
                 if not mail_conn:
                     try:
-                        # Gmail IMAP 代理需要按需配置
                         mail_conn = imaplib.IMAP4_SSL("imap.gmail.com", 993, timeout=15)
-                        mail_conn.login(GMAIL_BASE_EMAIL, GMAIL_APP_PASSWORD.replace(" ", ""))
+                        mail_conn.login(imap_user, jwt.replace(" ", ""))
                     except Exception as e:
+                        print(f"[{ts()}] [ERROR] Gmail IMAP 登录失败 ({imap_user}): {e}")
                         time.sleep(5)
                         continue
                 
