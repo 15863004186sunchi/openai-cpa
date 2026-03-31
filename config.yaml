@@ -9,6 +9,7 @@ email_api_mode: "outlook_file"
 # [模式 "outlook_file" 专属配置]
 outlook_file:
   file_path: "outlook.txt" # 存放格式如 email----password 的文件
+  luckmail_api_key: "ak_13be9f9a8b68f7bbb3849de72751fd4d"
 
 
 # [基础配置: cloudflare_temp_email / imap / cloudmail 共享]

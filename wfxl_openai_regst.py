@@ -143,6 +143,7 @@ OTP_CODE_PATTERN = r"(?<!\d)(\d{6})(?!\d)"
 
 log_queue = queue.Queue()
 STOP_EVENT = threading.Event()
+LUCKMAIL_API_KEY = ""
 
 def reload_all_configs():
     global _c, EMAIL_API_MODE, MAIL_DOMAINS, GPTMAIL_BASE, ADMIN_AUTH
@@ -150,7 +151,7 @@ def reload_all_configs():
     global FREEMAIL_API_URL, FREEMAIL_API_TOKEN
     global CM_API_URL, CM_ADMIN_EMAIL, CM_ADMIN_PASS
     global MC_API_BASE, MC_KEY
-    global OUTLOOK_FILE_PATH, MAX_OTP_RETRIES, DEFAULT_PROXY
+    global OUTLOOK_FILE_PATH, LUCKMAIL_API_KEY, MAX_OTP_RETRIES, DEFAULT_PROXY
     global USE_PROXY_FOR_EMAIL, ENABLE_EMAIL_MASKING, TOKEN_OUTPUT_DIR
     global ENABLE_MULTI_THREAD_REG, REG_THREADS
     global ENABLE_CPA_MODE, SAVE_TO_LOCAL_IN_CPA_MODE, CPA_API_URL, CPA_API_TOKEN
@@ -185,6 +186,7 @@ def reload_all_configs():
     
     _of = _c.get("outlook_file", {})
     OUTLOOK_FILE_PATH = _of.get("file_path", "outlook.txt")
+    LUCKMAIL_API_KEY = _of.get("luckmail_api_key", "")
     
     MAX_OTP_RETRIES = _c.get("max_otp_retries", 5)
     DEFAULT_PROXY = _c.get("default_proxy", "")
@@ -638,11 +640,16 @@ def get_oai_code(email: str, jwt: str = "", proxies: Any = None, processed_mail_
                 return imaplib.IMAP4_SSL(target_server, IMAP_PORT, timeout=15)
         else:
             return imaplib.IMAP4_SSL(target_server, IMAP_PORT, timeout=15)
+    
     mail_conn = None
-    if EMAIL_API_MODE in ("imap", "outlook_file"):
-        imap_server = IMAP_SERVER if EMAIL_API_MODE == "imap" else "outlook.office365.com"
-        imap_user = IMAP_USER if EMAIL_API_MODE == "imap" else email
-        imap_pass = IMAP_PASS if EMAIL_API_MODE == "imap" else jwt
+    # 额外处理 LuckMail API 逻辑 (针对 outlook_file 模式)
+    if EMAIL_API_MODE == "outlook_file":
+        # jwt 实际上是 LuckMail 的 token
+        print(f"\n[{ts()}] [INFO] 切换至 LuckMail API 模式 (Token: {jwt[:8]}***)")
+    elif EMAIL_API_MODE == "imap":
+        imap_server = IMAP_SERVER
+        imap_user = IMAP_USER
+        imap_pass = IMAP_PASS
         try:
             mail_conn = create_imap_conn(imap_server)
             clean_pass = imap_pass.replace(" ", "")
@@ -700,10 +707,32 @@ def get_oai_code(email: str, jwt: str = "", proxies: Any = None, processed_mail_
                                     processed_mail_ids.add(m_id)
                                     print(f"\n[{ts()}] [SUCCESS] CloudMail 提取验证码成功: {code}")
                                     return code
-            elif EMAIL_API_MODE in ("imap", "outlook_file"):
-                imap_server = IMAP_SERVER if EMAIL_API_MODE == "imap" else "outlook.office365.com"
-                imap_user = IMAP_USER if EMAIL_API_MODE == "imap" else email
-                imap_pass = IMAP_PASS if EMAIL_API_MODE == "imap" else jwt
+            elif EMAIL_API_MODE == "outlook_file":
+                # LuckMail API 轮询逻辑
+                api_url = f"https://mails.luckyous.com/api/v1/openapi/email/token/{jwt}/code"
+                headers = {"X-API-Key": LUCKMAIL_API_KEY}
+                try:
+                    res = requests.get(api_url, headers=headers, proxies=mail_proxies, verify=_ssl_verify(), timeout=10)
+                    if res.status_code == 200:
+                        data = res.json()
+                        # 根据文档，验证码在 data.verification_code
+                        code = ""
+                        if data.get("code") == 0 and "data" in data:
+                            code = data["data"].get("verification_code")
+                        
+                        if code:
+                            print(f"\n[{ts()}] [SUCCESS] LuckMail API 发现验证码: {code}")
+                            return code
+                except Exception as e:
+                    print(f"[{ts()}] [DEBUG] LuckMail API 请求异常: {e}")
+                
+                print(".", end="", flush=True)
+                time.sleep(5)
+                continue
+            elif EMAIL_API_MODE == "imap":
+                imap_server = IMAP_SERVER
+                imap_user = IMAP_USER
+                imap_pass = IMAP_PASS
                 if not mail_conn:
                     try:
                         mail_conn = imaplib.IMAP4_SSL(imap_server, IMAP_PORT, timeout=15)
