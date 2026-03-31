@@ -12,6 +12,12 @@ outlook_file:
   luckmail_api_key: "ak_13be9f9a8b68f7bbb3849de72751fd4d"
 
 
+# [模式 "gmail_alias" 专属配置]
+gmail_alias:
+  base_email: "" # 你的 Gmail 主地址，如 geeksunchi@gmail.com
+  app_password: "" # 你的 Gmail 应用专用密码 (16位)
+
+
 # [基础配置: cloudflare_temp_email / imap / cloudmail 共享]
 # 你的域名 (支持逗号分隔多域名随机轮换) 如果只有一个域名就只填一个域名
 

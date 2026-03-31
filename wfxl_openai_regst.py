@@ -144,6 +144,8 @@ OTP_CODE_PATTERN = r"(?<!\d)(\d{6})(?!\d)"
 log_queue = queue.Queue()
 STOP_EVENT = threading.Event()
 LUCKMAIL_API_KEY = ""
+GMAIL_BASE_EMAIL = ""
+GMAIL_APP_PASSWORD = ""
 
 def reload_all_configs():
     global _c, EMAIL_API_MODE, MAIL_DOMAINS, GPTMAIL_BASE, ADMIN_AUTH
@@ -152,6 +154,7 @@ def reload_all_configs():
     global CM_API_URL, CM_ADMIN_EMAIL, CM_ADMIN_PASS
     global MC_API_BASE, MC_KEY
     global OUTLOOK_FILE_PATH, LUCKMAIL_API_KEY, MAX_OTP_RETRIES, DEFAULT_PROXY
+    global GMAIL_BASE_EMAIL, GMAIL_APP_PASSWORD
     global USE_PROXY_FOR_EMAIL, ENABLE_EMAIL_MASKING, TOKEN_OUTPUT_DIR
     global ENABLE_MULTI_THREAD_REG, REG_THREADS
     global ENABLE_CPA_MODE, SAVE_TO_LOCAL_IN_CPA_MODE, CPA_API_URL, CPA_API_TOKEN
@@ -187,6 +190,10 @@ def reload_all_configs():
     _of = _c.get("outlook_file", {})
     OUTLOOK_FILE_PATH = _of.get("file_path", "outlook.txt")
     LUCKMAIL_API_KEY = _of.get("luckmail_api_key", "")
+    
+    _gm = _c.get("gmail_alias", {})
+    GMAIL_BASE_EMAIL = _gm.get("base_email", "")
+    GMAIL_APP_PASSWORD = _gm.get("app_password", "")
     
     MAX_OTP_RETRIES = _c.get("max_otp_retries", 5)
     DEFAULT_PROXY = _c.get("default_proxy", "")
@@ -382,14 +389,24 @@ def get_email_and_token(proxies: Any = None) -> tuple:
                 else:
                     print(f"[{ts()}] [ERROR] 找不到 Outlook 账号文件: {OUTLOOK_FILE_PATH}")
                 _OUTLOOK_INITIALIZED = True
-        
         if _OUTLOOK_ACCOUNTS_QUEUE.empty():
-            print(f"[{ts()}] [ERROR] outlook_file 账号队列已空！请补充 {OUTLOOK_FILE_PATH}")
+            print(f"[{ts()}] [WARNING] Outlook 账号池已用尽，请检查 outlook.txt")
             return None, None
-            
         acc_email, acc_pwd = _OUTLOOK_ACCOUNTS_QUEUE.get()
         print(f"[{ts()}] [INFO] 从文件获取 Outlook 账号: {acc_email}")
         return acc_email, acc_pwd
+    
+    if EMAIL_API_MODE == "gmail_alias":
+        # 随机生成后缀
+        random_suffix = "".join(random.choices(string.ascii_lowercase + string.digits, k=8))
+        if "@" in GMAIL_BASE_EMAIL:
+            name, domain = GMAIL_BASE_EMAIL.split("@", 1)
+            email_alias = f"{name}+{random_suffix}@{domain}"
+            print(f"[{ts()}] [INFO] 生成 Gmail 别名邮箱: {email_alias}")
+            return email_alias, GMAIL_APP_PASSWORD
+        else:
+            print(f"[{ts()}] [ERROR] GMAIL_BASE_EMAIL 配置无效: {GMAIL_BASE_EMAIL}")
+            return None, None
 
     if EMAIL_API_MODE == "mail_curl":
         try:
@@ -646,6 +663,8 @@ def get_oai_code(email: str, jwt: str = "", proxies: Any = None, processed_mail_
     if EMAIL_API_MODE == "outlook_file":
         # jwt 实际上是 LuckMail 的 token
         print(f"\n[{ts()}] [INFO] 切换至 LuckMail API 模式 (Token: {jwt[:8]}***)")
+    elif EMAIL_API_MODE == "gmail_alias":
+        print(f"\n[{ts()}] [INFO] 切换至 Gmail 别名模式 (Inbox: {GMAIL_BASE_EMAIL})")
     elif EMAIL_API_MODE == "imap":
         imap_server = IMAP_SERVER
         imap_user = IMAP_USER
@@ -729,6 +748,58 @@ def get_oai_code(email: str, jwt: str = "", proxies: Any = None, processed_mail_
                 print(".", end="", flush=True)
                 time.sleep(5)
                 continue
+            elif EMAIL_API_MODE == "gmail_alias":
+                # Gmail 只有 1 个 Inbox，但要搜不同的别名 TO
+                if not mail_conn:
+                    try:
+                        # Gmail IMAP 代理需要按需配置
+                        mail_conn = imaplib.IMAP4_SSL("imap.gmail.com", 993, timeout=15)
+                        mail_conn.login(GMAIL_BASE_EMAIL, GMAIL_APP_PASSWORD.replace(" ", ""))
+                    except Exception as e:
+                        time.sleep(5)
+                        continue
+                
+                # 在所有文件夹搜 (Gmail 有时会进分类标签)
+                folders_to_check = ['INBOX', '[Gmail]/All Mail', 'Spam', '[Gmail]/Spam']
+                found_in_loop = False
+                for folder in folders_to_check:
+                    try:
+                        status, _ = mail_conn.select(f'"{folder}"', readonly=True)
+                        if status != 'OK': continue
+                        
+                        # 重要：这里搜索特定的别名邮箱，Gmail IMAP 支持针对 Header 搜索
+                        search_query = f'(UNSEEN FROM "openai.com" TO "{email}")'
+                        status, messages = mail_conn.search(None, search_query)
+                        
+                        if status == 'OK' and messages[0]:
+                            mail_ids = messages[0].split()
+                            for mail_id in reversed(mail_ids):
+                                if mail_id in processed_mail_ids: continue
+                                
+                                res, data = mail_conn.fetch(mail_id, '(RFC822)')
+                                for response_part in data:
+                                    if isinstance(response_part, tuple):
+                                        msg = email_lib.message_from_bytes(response_part[1])
+                                        body = ""
+                                        if msg.is_multipart():
+                                            for part in msg.walk():
+                                                if part.get_content_type() == "text/plain":
+                                                    body += part.get_payload(decode=True).decode('utf-8', 'ignore')
+                                        else:
+                                            body = msg.get_payload(decode=True).decode('utf-8', 'ignore')
+                                        
+                                        code = _extract_otp_code(f"{msg.get('Subject', '')}\n{body}")
+                                        if code:
+                                            processed_mail_ids.add(mail_id)
+                                            print(f"\n[{ts()}] [SUCCESS] Gmail 验证码: {code}")
+                                            try: mail_conn.logout()
+                                            except: pass
+                                            return code
+                            found_in_loop = True
+                            break
+                    except Exception as e:
+                        pass
+                if not found_in_loop: print(".", end="", flush=True)
             elif EMAIL_API_MODE == "imap":
                 imap_server = IMAP_SERVER
                 imap_user = IMAP_USER
