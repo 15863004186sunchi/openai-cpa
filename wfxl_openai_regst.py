@@ -141,6 +141,70 @@ KNOWN_CLIPROXY_ERROR_LABELS = {
 OTP_CODE_PATTERN = r"(?<!\d)(\d{6})(?!\d)"
 # ================= 配置加载结束 =================
 
+log_queue = queue.Queue()
+STOP_EVENT = threading.Event()
+
+def reload_all_configs():
+    global _c, EMAIL_API_MODE, MAIL_DOMAINS, GPTMAIL_BASE, ADMIN_AUTH
+    global IMAP_SERVER, IMAP_PORT, IMAP_USER, IMAP_PASS
+    global FREEMAIL_API_URL, FREEMAIL_API_TOKEN
+    global CM_API_URL, CM_ADMIN_EMAIL, CM_ADMIN_PASS
+    global MC_API_BASE, MC_KEY
+    global OUTLOOK_FILE_PATH, MAX_OTP_RETRIES, DEFAULT_PROXY
+    global USE_PROXY_FOR_EMAIL, ENABLE_EMAIL_MASKING, TOKEN_OUTPUT_DIR
+    global ENABLE_MULTI_THREAD_REG, REG_THREADS
+    global ENABLE_CPA_MODE, SAVE_TO_LOCAL_IN_CPA_MODE, CPA_API_URL, CPA_API_TOKEN
+    global MIN_ACCOUNTS_THRESHOLD, BATCH_REG_COUNT, MIN_REMAINING_WEEKLY_PERCENT
+    global REMOVE_ON_LIMIT_REACHED
+    
+    _c = init_config()
+    EMAIL_API_MODE = _c.get("email_api_mode", "cloudflare_temp_email")
+    MAIL_DOMAINS = _c.get("mail_domains", "")
+    GPTMAIL_BASE = _c.get("gptmail_base", "")
+    
+    _imap = _c.get("imap", {})
+    IMAP_SERVER = _imap.get("server", "imap.gmail.com")
+    IMAP_PORT = _imap.get("port", 993)
+    IMAP_USER = _imap.get("user", "")
+    IMAP_PASS = _imap.get("pass", "")
+    
+    _free = _c.get("freemail", {})
+    FREEMAIL_API_URL = _free.get("api_url", "")
+    FREEMAIL_API_TOKEN = _free.get("api_token", "")
+    
+    _cm = _c.get("cloudmail", {})
+    CM_API_URL = _cm.get("api_url", "").rstrip('/')
+    CM_ADMIN_EMAIL = _cm.get("admin_email", "")
+    CM_ADMIN_PASS = _cm.get("admin_password", "")
+    
+    _mc = _c.get("mail_curl", {})
+    MC_API_BASE = _mc.get("api_base", "").rstrip('/')
+    MC_KEY = _mc.get("key", "")
+    
+    ADMIN_AUTH = _c.get("admin_auth", "")
+    
+    _of = _c.get("outlook_file", {})
+    OUTLOOK_FILE_PATH = _of.get("file_path", "outlook.txt")
+    
+    MAX_OTP_RETRIES = _c.get("max_otp_retries", 5)
+    DEFAULT_PROXY = _c.get("default_proxy", "")
+    USE_PROXY_FOR_EMAIL = _c.get("use_proxy_for_email", False)
+    ENABLE_EMAIL_MASKING = _c.get("enable_email_masking", True)
+    TOKEN_OUTPUT_DIR = _c.get("token_output_dir", "").strip()
+    
+    ENABLE_MULTI_THREAD_REG = _c.get("enable_multi_thread_reg", False)
+    REG_THREADS = _c.get("reg_threads", 3)
+    
+    _cpa = _c.get("cpa_mode", {})
+    ENABLE_CPA_MODE = _cpa.get("enable", False)
+    SAVE_TO_LOCAL_IN_CPA_MODE = _cpa.get("save_to_local", True)
+    CPA_API_URL = _cpa.get("api_url", "")
+    CPA_API_TOKEN = _cpa.get("api_token", "")
+    MIN_ACCOUNTS_THRESHOLD = _cpa.get("min_accounts_threshold", 30)
+    BATCH_REG_COUNT = _cpa.get("batch_reg_count", 1)
+    MIN_REMAINING_WEEKLY_PERCENT = _cpa.get("min_remaining_weekly_percent", 80)
+    REMOVE_ON_LIMIT_REACHED = _cpa.get("remove_on_limit_reached", False)
+
 def _load_dotenv(path: str = ".env") -> None:
     if not os.path.exists(path): return
     try:
@@ -186,9 +250,32 @@ def thread_safe_print(*args, **kwargs):
             final_msg = _thread_local.buffer.lstrip('\n')
             if final_msg:
                 _original_print(final_msg, end="", flush=True)
+                if 'log_queue' in globals():
+                    log_queue.put(final_msg)
         _thread_local.buffer = ""
 
 builtins.print = thread_safe_print
+
+class RegEngine:
+    def __init__(self):
+        self._thread = None
+
+    def is_running(self):
+        return self._thread is not None and self._thread.is_alive()
+
+    def start_normal(self, args):
+        STOP_EVENT.clear()
+        self._thread = threading.Thread(target=normal_main_loop, args=(args,), daemon=True)
+        self._thread.start()
+
+    def start_cpa(self, args):
+        STOP_EVENT.clear()
+        self._thread = threading.Thread(target=lambda: asyncio.run(cpa_main_loop(args)), daemon=True)
+        self._thread.start()
+
+    def stop(self):
+        STOP_EVENT.set()
+        print(f"\n[{ts()}] [系统] 已发送停止指令，正在安全退出...")
 
 
 def ts() -> str:
@@ -1734,6 +1821,9 @@ async def cpa_main_loop(args):
     loop = asyncio.get_running_loop()
 
     while True:
+        if STOP_EVENT.is_set():
+            print(f"[{ts()}] [系统] 收到停止信号，主循环正在退出...")
+            break
         print(f"\n[{ts()}] [INFO] 开始执行仓库例行巡检与测活...")
         try:
             res = requests.get(
@@ -1848,6 +1938,9 @@ def normal_main_loop(args):
     total_attempts = 0
 
     while True:
+        if STOP_EVENT.is_set():
+            print(f"[{ts()}] [系统] 收到停止信号，主循环正在退出...")
+            break
         if target_count > 0 and success_count >= target_count:
             print(f"\n[{ts()}] [SUCCESS] 已达到目标注册数量 ({target_count})，任务圆满结束！")
             break

@@ -12,5 +12,5 @@ services:
     volumes:
       - ./config.yaml:/app/config.yaml
       - ./data:/app/data
-      - ./wfxl_openai_regst.py:/app/wfxl_openai_regst.py
+      - ./wfxl_openai_regst.py:/app/core_engine.py
       - ./outlook.txt:/app/outlook.txt
