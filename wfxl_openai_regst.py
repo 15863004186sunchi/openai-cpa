@@ -159,7 +159,7 @@ def reload_all_configs():
     global ENABLE_MULTI_THREAD_REG, REG_THREADS
     global ENABLE_CPA_MODE, SAVE_TO_LOCAL_IN_CPA_MODE, CPA_API_URL, CPA_API_TOKEN
     global MIN_ACCOUNTS_THRESHOLD, BATCH_REG_COUNT, MIN_REMAINING_WEEKLY_PERCENT
-    global REMOVE_ON_LIMIT_REACHED
+    global REMOVE_ON_LIMIT_REACHED, NORMAL_SLEEP_MIN, NORMAL_SLEEP_MAX, NORMAL_TARGET_COUNT
     
     _c = init_config()
     EMAIL_API_MODE = _c.get("email_api_mode", "cloudflare_temp_email")
@@ -212,6 +212,11 @@ def reload_all_configs():
     BATCH_REG_COUNT = _cpa.get("batch_reg_count", 1)
     MIN_REMAINING_WEEKLY_PERCENT = _cpa.get("min_remaining_weekly_percent", 80)
     REMOVE_ON_LIMIT_REACHED = _cpa.get("remove_on_limit_reached", False)
+    
+    _normal = _c.get("normal_mode", {})
+    NORMAL_SLEEP_MIN = _normal.get("sleep_min", 5)
+    NORMAL_SLEEP_MAX = _normal.get("sleep_max", 30)
+    NORMAL_TARGET_COUNT = _normal.get("target_count", 0)
 
 def _load_dotenv(path: str = ".env") -> None:
     if not os.path.exists(path): return
