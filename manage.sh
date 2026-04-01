@@ -2,6 +2,13 @@
 
 # Docker Management Script for openai-cpa
 
+# 检测 docker-compose 命令 (兼容旧版和新版 docker compose)
+if command -v docker-compose &> /dev/null; then
+    DOCKER_CMD="docker-compose"
+else
+    DOCKER_CMD="docker compose"
+fi
+
 case "$1" in
   start)
     # 处理模式切换参数 (1: start, 2: mode_key)
@@ -13,27 +20,27 @@ case "$1" in
       sed -i 's/email_api_mode: .*/email_api_mode: "outlook_file"/' config.yaml
     fi
 
-    echo "Starting openai-cpa container..."
+    echo "Starting openai-cpa container via $DOCKER_CMD..."
     # 确保必要的数据文件存在防止被创建为目录
     touch accounts.txt
     touch outlook_used.txt
-    docker-compose up -d
+    $DOCKER_CMD up -d
     ;;
   stop)
     echo "Stopping openai-cpa container..."
-    docker-compose down
+    $DOCKER_CMD down
     ;;
   restart)
     echo "Restarting openai-cpa container..."
-    docker-compose restart
+    $DOCKER_CMD restart
     ;;
   status)
     echo "Container status:"
-    docker-compose ps
+    $DOCKER_CMD ps
     ;;
   logs)
     echo "Showing logs (Ctrl+C to exit):"
-    docker-compose logs -f
+    $DOCKER_CMD logs -f
     ;;
   *)
     echo "Usage: $0 {start [gmail|outlook]|stop|restart|status|logs}"
