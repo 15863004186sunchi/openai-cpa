@@ -14,8 +14,9 @@ case "$1" in
     fi
 
     echo "Starting openai-cpa container..."
-    # 确保 accounts.txt 存在防止被创建为目录
+    # 确保必要的数据文件存在防止被创建为目录
     touch accounts.txt
+    touch outlook_used.txt
     docker-compose up -d
     ;;
   stop)
