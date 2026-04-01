@@ -374,25 +374,38 @@ def get_email_and_token(proxies: Any = None) -> tuple:
     prefix = letters + digits + suffix
     
     if EMAIL_API_MODE == "outlook_file":
-        global _OUTLOOK_INITIALIZED
         with _OUTLOOK_INIT_LOCK:
-            if not _OUTLOOK_INITIALIZED:
-                if os.path.exists(OUTLOOK_FILE_PATH):
-                    with open(OUTLOOK_FILE_PATH, "r", encoding="utf-8") as f:
-                        for line in f:
-                            line = line.strip()
-                            if line and "----" in line:
-                                mail_str, pwd_str = line.split("----", 1)
-                                _OUTLOOK_ACCOUNTS_QUEUE.put((mail_str.strip(), pwd_str.strip()))
-                else:
-                    print(f"[{ts()}] [ERROR] 找不到 Outlook 账号文件: {OUTLOOK_FILE_PATH}")
-                _OUTLOOK_INITIALIZED = True
-        if _OUTLOOK_ACCOUNTS_QUEUE.empty():
-            print(f"[{ts()}] [WARNING] Outlook 账号池已用尽，请检查 outlook.txt")
-            return None, None
-        acc_email, acc_pwd = _OUTLOOK_ACCOUNTS_QUEUE.get()
-        print(f"[{ts()}] [INFO] 从文件获取 Outlook 账号: {acc_email}")
-        return acc_email, acc_pwd
+            if not os.path.exists(OUTLOOK_FILE_PATH):
+                print(f"[{ts()}] [ERROR] 找不到 Outlook 账号文件: {OUTLOOK_FILE_PATH}")
+                return None, None
+            
+            # 读取当前所有账号
+            with open(OUTLOOK_FILE_PATH, "r", encoding="utf-8") as f:
+                lines = [l.strip() for l in f if l.strip()]
+            
+            if not lines:
+                print(f"[{ts()}] [WARNING] Outlook 账号池已用尽 (outlook.txt 为空)")
+                return None, None
+                
+            # 取出第一个并解析
+            target_line = lines[0]
+            remaining_lines = lines[1:]
+            
+            if "----" not in target_line:
+                print(f"[{ts()}] [ERROR] 账号格式错误 (需 email----token): {target_line}")
+                # 即使格式错误也跳过该行，重写文件防止卡死
+                with open(OUTLOOK_FILE_PATH, "w", encoding="utf-8") as f:
+                    f.write("\n".join(remaining_lines) + ("\n" if remaining_lines else ""))
+                return None, None
+
+            acc_email, acc_pwd = target_line.split("----", 1)
+            
+            # 将剩余账号写回文件，实现“弹出”效果 (保证断电/重启不重复)
+            with open(OUTLOOK_FILE_PATH, "w", encoding="utf-8") as f:
+                f.write("\n".join(remaining_lines) + ("\n" if remaining_lines else ""))
+                
+            print(f"[{ts()}] [INFO] 从文件获取(并移除) Outlook 账号: {acc_email.strip()}")
+            return acc_email.strip(), acc_pwd.strip()
     
     if EMAIL_API_MODE == "gmail_alias":
         if not GMAIL_ACCOUNTS:
