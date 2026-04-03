@@ -4,7 +4,7 @@
 # https://github.com/maillab/cloud-mail
 # https://github.com/s12ryt/mail-curl
 # 可选值: "imap" / "freemail" / "cloudflare_temp_email" / "cloudmail" / "mail_curl" / "outlook_file"
-email_api_mode: "gmail_alias"
+email_api_mode: "imap"
 
 # [模式 "outlook_file" 专属配置]
 outlook_file:
@@ -25,7 +25,7 @@ gmail_alias:
 # [基础配置: cloudflare_temp_email / imap / cloudmail 共享]
 # 你的域名 (支持逗号分隔多域名随机轮换) 如果只有一个域名就只填一个域名
 
-mail_domains: "happyfish.us.ci"
+mail_domains: "flapysun.com"
 # 你的临时邮箱 后端API 基础地址 结尾不要/，IMAP和freemail/cloudmail/mail_curl不需要配置此项。注意：用浏览器打开后端api验证是否可访问
 gptmail_base: "https://happyfishmail.2876047765.workers.dev" #是后端访问链接，不是前端访问链接，正常情况浏览器打开访问会显示ok就是对的
 
@@ -40,9 +40,9 @@ imap:
   # IMAP 端口
   port: 993
   # 接收转发的真实邮箱账号
-  user: ""
+  user: "geeksunchi@gmail.com"
   # 16位应用专用密码，谷歌邮箱要去https://myaccount.google.com/apppasswords这里创建专属应用密码
-  pass: ""
+  pass: "jcfk oprb igpm wbwh"
 
 # [模式 "freemail" 专属]
 freemail:

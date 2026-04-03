@@ -15,4 +15,5 @@ services:
       - ./wfxl_openai_regst.py:/app/core_engine.py
       - ./outlook.txt:/app/outlook.txt
       - ./outlook_used.txt:/app/outlook_used.txt
+      - ./outlook_error.txt:/app/outlook_error.txt
       - ./accounts.txt:/app/accounts.txt

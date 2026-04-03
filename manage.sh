@@ -18,12 +18,15 @@ case "$1" in
     elif [ "$2" == "outlook" ]; then
       echo "Switching to Outlook File mode..."
       sed -i 's/email_api_mode: .*/email_api_mode: "outlook_file"/' config.yaml
+    elif [ "$2" == "custom" ]; then
+      echo "Switching to Custom Domain (IMAP) mode..."
+      sed -i 's/email_api_mode: .*/email_api_mode: "imap"/' config.yaml
     fi
 
     echo "Starting openai-cpa container via $DOCKER_CMD..."
     # 确保必要的数据文件存在防止被创建为目录
     touch accounts.txt
-    touch outlook_used.txt
+    touch outlook.txt outlook_used.txt outlook_error.txt accounts.txt
     $DOCKER_CMD up -d
     ;;
   stop)
@@ -43,6 +46,6 @@ case "$1" in
     $DOCKER_CMD logs -f
     ;;
   *)
-    echo "Usage: $0 {start [gmail|outlook]|stop|restart|status|logs}"
+    echo "Usage: $0 {start [gmail|outlook|custom]|stop|restart|status|logs}"
     exit 1
 esac

@@ -146,6 +146,7 @@ STOP_EVENT = threading.Event()
 LUCKMAIL_API_KEY = ""
 GMAIL_ACCOUNTS = []
 OUTLOOK_USED_LOG = "outlook_used.txt"
+OUTLOOK_ERROR_LOG = "outlook_error.txt"
 
 def reload_all_configs():
     global _c, EMAIL_API_MODE, MAIL_DOMAINS, GPTMAIL_BASE, ADMIN_AUTH
@@ -531,7 +532,7 @@ def get_email_and_token(proxies: Any = None) -> tuple:
     selected_domain = random.choice(domain_list)
     email_str = f"{prefix}@{selected_domain}"
     
-    if EMAIL_API_MODE in ["imap"]:
+    if EMAIL_API_MODE in ["imap", "custom"]:
         print(f"[{ts()}] [INFO] 成功生成临时域名邮箱: {email_str}")
         return email_str, ""
 
@@ -1332,13 +1333,19 @@ def run(proxy: Optional[str]) -> tuple:
             return None, None
 
     email, email_jwt = get_email_and_token(proxies)
+    
+    def log_failure(e_mail):
+        if e_mail and EMAIL_API_MODE == "outlook_file":
+            with open(OUTLOOK_ERROR_LOG, "a", encoding="utf-8") as f_err:
+                f_err.write(f"{e_mail}\n")
+
     if not email: return None, None
 
-    password = _generate_password()
-    print(f"[{ts()}] [INFO] 提交注册信息 (密码: {password[:4]}****)")
-
-    oauth_reg = generate_oauth_url()
     try:
+        password = _generate_password()
+        print(f"[{ts()}] [INFO] 提交注册信息 (密码: {password[:4]}****)")
+
+        oauth_reg = generate_oauth_url()
         s_reg.get(oauth_reg.auth_url, proxies=proxies, verify=True, timeout=15)
         did = s_reg.cookies.get("oai-did") or ""
         
@@ -1359,11 +1366,9 @@ def run(proxy: Optional[str]) -> tuple:
             proxies=proxies
         )
         
-        # if signup_resp.status_code == 403:
-            # print(f"[{ts()}] [WARNING] {email} 注册请求触发 403 拦截，稍作等待后重试...")
-            # return "retry_403", None
         if signup_resp.status_code != 200:
             print(f"[{ts()}] [ERROR] 注册表单提交失败，中断当前流程: {signup_resp.text}")
+            log_failure(email)
             return None, None
 
         pwd_resp = _post_with_retry(
@@ -1379,6 +1384,7 @@ def run(proxy: Optional[str]) -> tuple:
         
         if pwd_resp.status_code != 200:
             print(f"[{ts()}] [ERROR] 密码注册环节异常: {pwd_resp.text}")
+            log_failure(email)
             return None, None
 
         try:
@@ -1419,6 +1425,7 @@ def run(proxy: Optional[str]) -> tuple:
 
             if not code:
                 print(f"[{ts()}] [ERROR] 重试次数上限，丢弃当前邮箱。")
+                log_failure(email)
                 return None, None
             
             code_resp = _post_with_retry(
@@ -1432,11 +1439,11 @@ def run(proxy: Optional[str]) -> tuple:
             )
             if code_resp.status_code != 200:
                 print(f"[{ts()}] [ERROR] 验证码校验未通过: {code_resp.text}")
+                log_failure(email)
                 return None, None
 
         user_info = generate_random_user_info()
         print(f"[{ts()}] [INFO] 初始化账户基础信息 (昵称: {user_info['name']}, 生日: {user_info['birthdate']})...")
-        user_info = generate_random_user_info()
         create_account_resp = _post_with_retry(
             s_reg, "https://auth.openai.com/api/accounts/create_account", 
             headers=_oai_headers(did, {"Referer": "https://auth.openai.com/about-you", "content-type": "application/json"}), 
@@ -1445,6 +1452,7 @@ def run(proxy: Optional[str]) -> tuple:
         
         if create_account_resp.status_code != 200:
             print(f"[{ts()}] [ERROR] 账户创建受阻: 遭遇拦截，响应代码 {create_account_resp.status_code}")
+            log_failure(email)
             return None, None
 
         auth_cookie = s_reg.cookies.get("oai-client-auth-session")
@@ -1455,6 +1463,7 @@ def run(proxy: Optional[str]) -> tuple:
                 if claims.get("workspaces"): 
                     has_workspace = True
             except: pass
+            
         if has_workspace:
             print(f"[{ts()}] [SUCCESS] 正在提取最终凭据...")
             oauth_log = generate_oauth_url()
@@ -1534,6 +1543,7 @@ def run(proxy: Optional[str]) -> tuple:
 
                 if not code2:
                     print(f"[{ts()}] [ERROR] 重新发送后依然未收到验证码，彻底放弃。")
+                    log_failure(email)
                     return None, None
                     
                 code2_resp = _post_with_retry(
@@ -1543,6 +1553,7 @@ def run(proxy: Optional[str]) -> tuple:
                 )
                 if code2_resp.status_code != 200:
                     print(f"[{ts()}] [ERROR] 二次安全验证 OTP 校验失败: {code2_resp.text}")
+                    log_failure(email)
                     return None, None
                 
                 next_url = str(code2_resp.json().get("continue_url") or "").strip()
@@ -1569,11 +1580,13 @@ def run(proxy: Optional[str]) -> tuple:
                             return submit_callback_url(callback_url=final_loc, expected_state=oauth_log.state, code_verifier=oauth_log.code_verifier, proxies=proxies), password
 
         print(f"[{ts()}] [ERROR] OAuth 授权链路追踪失败 (最终停留在: {current_url})")
+        log_failure(email)
         return None, None
 
     except Exception as e:
         import traceback
         print(f"[{ts()}] [ERROR] 注册主流程发生严重异常: {e}")
+        log_failure(email)
         return None, None
 
 def _normalize_cpa_auth_files_url(api_url: str) -> str:
